@@ -1,0 +1,29 @@
+{
+  "db":  {
+    "client": "mysql2",
+    "connection": {
+    },
+    "pool": {
+      "min": 0,
+      "max": 7
+    },
+    "migrations": {
+      "directory": "./priv/migrations"
+    },
+    "seeds": {
+      "directory": "./priv/seeds/production"
+    },
+    "useNullAsDefault": true
+  },
+  "s3": {
+    "region": "",
+    "bucket": ""
+  },
+  "sqs": {
+    "link": {
+    }
+  },
+  "endpoints": {
+    "auth": ""
+  }
+}

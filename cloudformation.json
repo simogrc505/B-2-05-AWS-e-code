@@ -1,0 +1,312 @@
+{
+    "AWSTemplateFormatVersion" : "2010-09-09",
+    "Description": "Create Entity API",
+    "Parameters" : {
+        "NetworkStackNameParameter": {
+            "Type": "String",
+            "Default": "network-stack",
+            "Description": "Network base stack"
+        },
+        "EcsStackNameParameter": {
+            "Type": "String",
+            "Default": "ecs-cluster",
+            "Description": "ECS cluster cloudformation stack name"
+        },
+        "ServiceName": {
+            "Type": "String",
+            "Default": "upload",
+            "Description": "Your application name"
+        },
+        "ServicePort": {
+            "Default": "8085",
+            "Type": "Number",
+            "Description": "Your application port"
+        },
+        "ServicePriority": {
+            "Default": "5",
+            "Type": "Number",
+            "Description": "Application priority"
+        },
+        "ServiceHostname": {
+            "Default": "crm.a.deascuola.it",
+            "Type": "String",
+            "Description": "Application domain name"
+        },
+        "ServicePath": {
+            "Default": "/v1/upload",
+            "Type": "String",
+            "Description": "Application path value"
+        },
+        "Release": {
+            "Type": "String",
+            "Default": "1234356",
+            "Description": "Docker image release (TAG)"
+        },
+        "DesiredCapacity":{
+            "Type":"Number",
+            "Default":1,
+            "Description":"Number of instances to launch in your ECS cluster."
+        },
+        "MaxSize": {
+            "Type": "Number",
+            "Default": 2,
+            "Description": "Number of max task count"
+        },
+        "CPU": {
+            "Type": "Number",
+            "Default": 64,
+            "Description": "CPU Shares"
+        },
+        "Memory": {
+            "Type": "Number",
+            "Default": 64,
+            "Description": "Memory limit in MB"
+        },
+        "BucketName": {
+          "Type": "String",
+          "Default": "upload.a.deascuola.it"
+        },
+        "EcsRoleArnAllowed": {
+            "Type": "String",
+            "Default": "arn:aws:iam::xxxxxxxx:role/xxxxxxxxxxxxx"
+        }
+    },
+    "Resources": {
+        "TaskRole":{
+            "Type":"AWS::IAM::Role",
+            "Properties":{
+                "AssumeRolePolicyDocument":{
+                    "Statement":[
+                        {
+                            "Effect":"Allow",
+                            "Principal":{
+                                "Service":[
+                                    "ecs-tasks.amazonaws.com"
+                                ]
+                            },
+                            "Action":[
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path":"/",
+                "Policies":[
+                    {
+                        "PolicyName":"access-catalog-s3-bucket",
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Effect":"Allow",
+                                    "Action":[
+                                        "s3:*"
+                                    ],
+                                    "Resource":[
+                                      {"Fn::GetAtt" : [ "Bucket", "Arn" ]},
+                                      {"Fn::Join": ["", [{"Fn::GetAtt" : [ "Bucket", "Arn" ]}, "/*"]]}
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "Bucket": {
+          "Type": "AWS::S3::Bucket",
+          "Properties": {
+            "BucketName" : {"Ref": "BucketName"},
+            "AccessControl": "PublicRead",
+            "WebsiteConfiguration": {
+              "IndexDocument" : "index.html",
+              "ErrorDocument": "index.html"
+            }
+          }
+        },
+        "BucketPolicy": {
+            "Type" : "AWS::S3::BucketPolicy",
+            "Properties" : {
+                "Bucket" : { "Ref": "Bucket" },
+                "PolicyDocument" : {
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": "*",
+                            "Action": ["s3:GetObject"],
+                            "Resource": { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "Bucket" } , "/*" ]]}
+                        },
+                        {
+                            "Effect": "Deny",
+                            "Principal": "*",
+                            "Action": "s3:*",
+                            "Resource": { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "Bucket" } , "/rda/*" ]]},
+                            "Condition": {
+                                "StringNotLike": {
+                                    "aws:SourceArn": { "Ref": "EcsRoleArnAllowed" }
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        "taskdefinition": {
+            "Type": "AWS::ECS::TaskDefinition",
+            "Properties" : {
+                "TaskRoleArn": {"Ref": "TaskRole"},
+                "ContainerDefinitions" : [
+                    {
+                        "Name": {"Ref": "ServiceName"},
+                        "Cpu": {"Ref": "CPU"},
+                        "Essential": "true",
+                        "Image": {"Fn::Join": [":", ["136121785637.dkr.ecr.eu-central-1.amazonaws.com/deascuola/upload", {"Ref": "Release"}]]},
+                        "Memory": {"Ref": "Memory"},
+                        "Environment": [
+                            {
+                                "Name": "NODE_ENV",
+                                "Value": "production"
+                            },
+                            {
+                                "Name": "NODE_PORT",
+                                "Value": 3000
+                            },
+                            {
+                                "Name": "WEB_MEMORY",
+                                "Value": {"Ref": "Memory"}
+                            },
+                            {
+                              "Name": "S3_WEBSITE",
+                              "Value": {"Fn::GetAtt" : [ "Bucket", "WebsiteURL" ]}
+                            },
+                            {
+                              "Name": "S3_BUCKET_NAME",
+                              "Value": {"Ref": "BucketName"}
+                            }
+                        ],
+                        "LogConfiguration":{
+                            "LogDriver":"awslogs",
+                            "Options":{
+                                "awslogs-group": {"Fn::ImportValue" : {"Fn::Sub" : "${EcsStackNameParameter}-LogGroupName"}},
+                                "awslogs-region":{ "Ref":"AWS::Region" },
+                                "awslogs-stream-prefix": {"Ref": "ServiceName"}
+                            }
+                        },
+                        "MountPoints": [],
+                        "PortMappings": [
+                            { "HostPort": {"Ref": "ServicePort"}, "ContainerPort": 3000 }
+                        ]
+                    }
+                ],
+                "Volumes": []
+            }
+        },
+        "service": {
+            "Type": "AWS::ECS::Service",
+            "Properties" : {
+                "Cluster": {"Fn::ImportValue" : {"Fn::Sub" : "${EcsStackNameParameter}-ECSCluster"}},
+                "DesiredCount": {"Ref": "DesiredCapacity"},
+                "LoadBalancers": [
+                    {
+                        "ContainerName": {"Ref": "ServiceName"},
+                        "ContainerPort":"3000",
+                        "TargetGroupArn":{"Ref":"ECSTG"}
+                    }
+                ],
+                "Role" : {"Ref":"ECSServiceRole"},
+                "TaskDefinition" : {"Ref":"taskdefinition"},
+                "DeploymentConfiguration": {
+                  "MaximumPercent" : 200,
+                  "MinimumHealthyPercent" : 50
+                }
+            }
+        },
+        "ECSALBListenerRule":{
+          "Type":"AWS::ElasticLoadBalancingV2::ListenerRule",
+          "Properties":{
+            "Actions":[
+                {
+                    "Type":"forward",
+                    "TargetGroupArn":{ "Ref":"ECSTG" }
+                }
+            ],
+            "Conditions":[
+                {
+                    "Field":"host-header",
+                    "Values":[ {"Ref": "ServiceHostname"} ]
+                },
+                {
+                    "Field":"path-pattern",
+                    "Values":[ {"Fn::Sub": "${ServicePath}*"}]
+                }
+
+            ],
+            "ListenerArn":{"Fn::ImportValue" : {"Fn::Sub" : "${EcsStackNameParameter}-ALBListener"}},
+            "Priority": {"Ref": "ServicePriority"}
+          }
+        },
+        "ECSTG":{
+            "Type":"AWS::ElasticLoadBalancingV2::TargetGroup",
+            "Properties":{
+                "HealthCheckIntervalSeconds":10,
+                "HealthCheckPath":"/v1/ping",
+                "HealthCheckProtocol":"HTTP",
+                "HealthCheckTimeoutSeconds":5,
+                "HealthyThresholdCount":2,
+                "Name": {"Ref": "ServiceName"},
+                "Port": {"Ref": "ServicePort"},
+                "Protocol":"HTTP",
+                "UnhealthyThresholdCount":2,
+                "VpcId": {"Fn::ImportValue" : {"Fn::Sub" : "${NetworkStackNameParameter}-VpcID"}},
+                "TargetGroupAttributes": [
+                    {
+                        "Key": "deregistration_delay.timeout_seconds",
+                        "Value": "30"
+                    }
+                ]
+            }
+        },
+        "ECSServiceRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [ "ecs.amazonaws.com" ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "ecs-service",
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
+                                        "elasticloadbalancing:DeregisterTargets",
+                                        "elasticloadbalancing:Describe*",
+                                        "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
+                                        "elasticloadbalancing:RegisterTargets",
+                                        "ec2:Describe*",
+                                        "ec2:AuthorizeSecurityGroupIngress"
+                                    ],
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+    }
+}
+
+

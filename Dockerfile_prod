@@ -1,0 +1,10 @@
+FROM node:10.11-alpine
+
+WORKDIR /code
+
+ADD node_modules node_modules
+ADD config config
+ADD src src
+
+ENTRYPOINT ["node"]
+CMD ["src/index.js"]
